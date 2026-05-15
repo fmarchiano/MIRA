@@ -63,9 +63,13 @@ Three output files are written automatically:
 
 ## Reference FASTA
 
-`AR_targets.fa` is distributed separately (see Releases). Download and pass it via `-r`.
+Download `AR_targets.fa` from the [latest release](https://github.com/fmarchiano/MIRA/releases/latest):
 
-It contains six synthetic 150–160 bp sequences centered on clinically actionable AR sites:
+```bash
+curl -LO https://github.com/fmarchiano/MIRA/releases/latest/download/AR_targets.fa
+```
+
+Then pass it via `-r AR_targets.fa`. It contains six synthetic 150–160 bp sequences centered on clinically actionable AR sites:
 
 | Target | Type | Source |
 |--------|------|--------|
