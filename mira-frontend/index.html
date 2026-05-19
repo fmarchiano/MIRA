@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MIRA AR Dashboard</title>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div id="upload-zone"></div>
+      <div id="filter-panel"></div>
+    </aside>
+    <main id="main-content">
+      <section id="heatmap-section">
+        <h2 class="section-title">Cohort Overview</h2>
+        <div id="heatmap-chart"></div>
+      </section>
+      <section id="table-section">
+        <h2 class="section-title">Sample Summary</h2>
+        <div id="summary-table"></div>
+      </section>
+    </main>
+    <aside id="detail-drawer" class="drawer--closed">
+      <div id="sample-card"></div>
+    </aside>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>
