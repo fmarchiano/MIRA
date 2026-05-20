@@ -1,0 +1,4 @@
+sample	target	position	ref	alt	supporting_reads	total_reads	vaf
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_T878A_region	120	T	G	11	60	0.1833
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_T878A_region	123	G	A	12	60	0.2000
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_H875Y_region	123	G	T	10	48	0.2083

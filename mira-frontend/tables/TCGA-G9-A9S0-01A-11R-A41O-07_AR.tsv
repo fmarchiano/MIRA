@@ -1,0 +1,8 @@
+sample	target_id	variant_type	position	ref	alt	supporting_reads	total_reads	frequency
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_V7_exon3_CE3_junction variant_type=SPLICE_JUNCTION source=NM_000044.6+FJ235916 note=exon3_last75nt+CE3_first75nt	INDEL	76	A	-	10	36	0.2778
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_CE3_full variant_type=SPLICE_JUNCTION source=FJ235916 note=full_CE3_160bp_unique_to_AR-V7	PRESENCE	.	.	.	14	14	1.0000
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_T878A_region variant_type=SNP source=NM_000044.6 note=153bp_codon878_offset75_ref=ACT(T)_alt=GCT(A)	SNP	120	T	G	11	60	0.1833
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_T878A_region variant_type=SNP source=NM_000044.6 note=153bp_codon878_offset75_ref=ACT(T)_alt=GCT(A)	SNP	123	G	A	12	60	0.2000
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_L702H_region variant_type=SNP source=NM_000044.6 note=153bp_codon702_offset75_ref=CTC(L)_alt=CAC(H)	PRESENCE	.	.	.	42	42	1.0000
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_W742C_region variant_type=SNP source=NM_000044.6 note=153bp_codon742_offset75_ref=TGG(W)_alt=TGT(C)	PRESENCE	.	.	.	44	44	1.0000
+TCGA-G9-A9S0-01A-11R-A41O-07_R1	AR_H875Y_region variant_type=SNP source=NM_000044.6 note=153bp_codon875_offset75_ref=CAT(H)_alt=TAT(Y)	SNP	123	G	T	10	48	0.2083
