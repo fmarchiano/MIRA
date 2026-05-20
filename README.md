@@ -23,12 +23,19 @@ MIRA runs on existing bulk RNA-seq data — no dedicated assay required.
 
 ## Installation
 
-### Pre-compiled binary (Linux x86_64, glibc ≥ 2.34)
+### Pre-compiled binary (Linux x86_64, static — no dependencies)
 
 ```bash
 curl -LO https://github.com/fmarchiano/MIRA/releases/latest/download/mira
 chmod +x mira
 ./mira --help
+```
+
+### Reference files
+
+```bash
+curl -LO https://github.com/fmarchiano/MIRA/releases/latest/download/AR_targets.fa
+curl -LO https://github.com/fmarchiano/MIRA/releases/latest/download/housekeeping.fa
 ```
 
 ### Build from source
