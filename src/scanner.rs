@@ -34,16 +34,14 @@ fn scan_single(
     library_type: &LibraryType,
 ) -> Result<ScanResult> {
     const BATCH: usize = 50_000;
-    let mut reader = match parse_fastx_file(path) {
-        Ok(r) => r,
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("empty") || msg.contains("first two bytes") {
-                return Ok(ScanResult { hits: vec![] });
-            }
-            return Err(e).with_context(|| format!("Cannot open FASTQ: {}", path.display()));
-        }
-    };
+
+    // Empty file fast path — avoids needletail error on 0-byte files
+    if path.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+        return Ok(ScanResult { hits: vec![] });
+    }
+
+    let mut reader = parse_fastx_file(path)
+        .with_context(|| format!("Cannot open FASTQ: {}", path.display()))?;
 
     let mut all_hits: Vec<Hit> = Vec::new();
 
@@ -60,10 +58,15 @@ fn scan_single(
                         qual: rec.qual().unwrap_or(&[]).to_vec(),
                     });
                 }
-                None => { done = true; break; }
+                None => {
+                    done = true;
+                    break;
+                }
             }
         }
-        if batch.is_empty() { break; }
+        if batch.is_empty() {
+            break;
+        }
 
         let batch_hits: Mutex<Vec<Hit>> = Mutex::new(Vec::new());
         batch.par_iter().for_each(|read| {
@@ -71,7 +74,10 @@ fn scan_single(
                 return;
             }
             let seq = strand_seq(read, library_type, false);
-            if max_mismatches > 0 && !index.has_exact_hit(&seq) {
+            // Pre-filter: skip reads with no exact k-mer hit in the index.
+            // Safe even in mismatch mode: a read with 1–2 SNPs still has many
+            // exact-matching k-mers from the mutation-free flanking region.
+            if !index.has_exact_hit(&seq) {
                 return;
             }
             let targets = index.scan_read(&seq, max_mismatches);
@@ -84,7 +90,9 @@ fn scan_single(
         });
         all_hits.extend(batch_hits.into_inner().unwrap());
 
-        if done { break; }
+        if done {
+            break;
+        }
     }
 
     Ok(ScanResult { hits: all_hits })
@@ -101,27 +109,27 @@ fn scan_paired(
     const BATCH: usize = 50_000;
 
     let open_fastq = |path: &Path, label: &str| -> Result<Box<dyn needletail::FastxReader>> {
+        if path.metadata().map(|m| m.len() == 0).unwrap_or(false) {
+            return Err(anyhow::anyhow!("{} FASTQ is empty: {}", label, path.display()));
+        }
         parse_fastx_file(path).map_err(|e| {
             anyhow::anyhow!("Cannot open {} FASTQ {}: {}", label, path.display(), e)
         })
     };
+
     let mut r1 = match open_fastq(r1_path, "R1") {
         Ok(r) => r,
-        Err(e) => {
-            if e.to_string().contains("empty") || e.to_string().contains("first two bytes") {
-                return Ok(ScanResult { hits: vec![] });
-            }
-            return Err(e);
+        Err(e) if e.to_string().contains("is empty") => {
+            return Ok(ScanResult { hits: vec![] });
         }
+        Err(e) => return Err(e),
     };
     let mut r2 = match open_fastq(r2_path, "R2") {
         Ok(r) => r,
-        Err(e) => {
-            if e.to_string().contains("empty") || e.to_string().contains("first two bytes") {
-                return Ok(ScanResult { hits: vec![] });
-            }
-            return Err(e);
+        Err(e) if e.to_string().contains("is empty") => {
+            return Ok(ScanResult { hits: vec![] });
         }
+        Err(e) => return Err(e),
     };
 
     let mut all_hits: Vec<Hit> = Vec::new();
@@ -136,14 +144,27 @@ fn scan_paired(
                 (Some(a), Some(b)) => {
                     let a = a.with_context(|| "Error reading R1")?;
                     let b = b.with_context(|| "Error reading R2")?;
-                    r1_batch.push(Read { id: a.id().to_vec(), seq: a.seq().to_vec(), qual: a.qual().unwrap_or(&[]).to_vec() });
-                    r2_batch.push(Read { id: b.id().to_vec(), seq: b.seq().to_vec(), qual: b.qual().unwrap_or(&[]).to_vec() });
+                    r1_batch.push(Read {
+                        id: a.id().to_vec(),
+                        seq: a.seq().to_vec(),
+                        qual: a.qual().unwrap_or(&[]).to_vec(),
+                    });
+                    r2_batch.push(Read {
+                        id: b.id().to_vec(),
+                        seq: b.seq().to_vec(),
+                        qual: b.qual().unwrap_or(&[]).to_vec(),
+                    });
                 }
-                (None, None) => { done = true; break; }
+                (None, None) => {
+                    done = true;
+                    break;
+                }
                 _ => anyhow::bail!("Paired-end FASTQ files have mismatched read counts"),
             }
         }
-        if r1_batch.is_empty() { break; }
+        if r1_batch.is_empty() {
+            break;
+        }
 
         let pairs: Vec<(&Read, &Read)> = r1_batch.iter().zip(r2_batch.iter()).collect();
         let batch_hits: Mutex<Vec<Hit>> = Mutex::new(Vec::new());
@@ -151,22 +172,23 @@ fn scan_paired(
         pairs.par_iter().for_each(|(r1, r2)| {
             let r1_pass = passes_mean_qual(&r1.qual, min_mean_qual);
             let r2_pass = passes_mean_qual(&r2.qual, min_mean_qual);
-            if !r1_pass || !r2_pass {
+            // Drop pair only if BOTH mates fail quality — allows mate rescue
+            if !r1_pass && !r2_pass {
                 return;
             }
 
             let s1 = strand_seq(r1, library_type, false);
             let s2 = strand_seq(r2, library_type, true);
 
-            // Pre-filter: skip mismatch probing if neither read has any exact k-mer hit
-            if max_mismatches > 0 && !index.has_exact_hit(&s1) && !index.has_exact_hit(&s2) {
+            // Pre-filter: skip if neither read has any exact k-mer hit
+            if !index.has_exact_hit(&s1) && !index.has_exact_hit(&s2) {
                 return;
             }
 
             let t1 = index.scan_read(&s1, max_mismatches);
             let t2 = index.scan_read(&s2, max_mismatches);
 
-            // mate rescue: if either hits, emit both
+            // Mate rescue: if either hits, emit both reads
             let mut all_targets: Vec<TargetId> = t1.clone();
             for t in &t2 {
                 if !all_targets.contains(t) {
@@ -184,7 +206,9 @@ fn scan_paired(
         });
 
         all_hits.extend(batch_hits.into_inner().unwrap());
-        if done { break; }
+        if done {
+            break;
+        }
     }
 
     Ok(ScanResult { hits: all_hits })
@@ -201,16 +225,27 @@ fn passes_mean_qual(qual: &[u8], threshold: u8) -> bool {
 
 /// Apply strand filter: for stranded libraries, reverse-complement reads
 /// that should be on the antisense strand so they can match target sense sequence.
+///
+/// Convention (dUTP/ligation):
+///   Forward: R1 is on antisense strand → RC to get sense; R2 is sense
+///   Reverse:  R1 is sense; R2 is antisense → RC R2
+/// Note: this is the RF convention. STAR/Salmon call this "reverse" (dUTP).
 fn strand_seq(read: &Read, library_type: &LibraryType, is_r2: bool) -> Vec<u8> {
     match library_type {
         LibraryType::Unstranded => read.seq.clone(),
         LibraryType::Forward => {
-            // R1 = antisense → rc to get sense; R2 = sense already
-            if !is_r2 { rev_comp(&read.seq) } else { read.seq.clone() }
+            if !is_r2 {
+                rev_comp(&read.seq)
+            } else {
+                read.seq.clone()
+            }
         }
         LibraryType::Reverse => {
-            // R1 = sense; R2 = antisense → rc
-            if is_r2 { rev_comp(&read.seq) } else { read.seq.clone() }
+            if is_r2 {
+                rev_comp(&read.seq)
+            } else {
+                read.seq.clone()
+            }
         }
     }
 }
@@ -221,6 +256,10 @@ fn rev_comp(seq: &[u8]) -> Vec<u8> {
 
 fn complement(b: u8) -> u8 {
     match b.to_ascii_uppercase() {
-        b'A' => b'T', b'T' => b'A', b'C' => b'G', b'G' => b'C', _ => b'N',
+        b'A' => b'T',
+        b'T' => b'A',
+        b'C' => b'G',
+        b'G' => b'C',
+        _ => b'N',
     }
 }

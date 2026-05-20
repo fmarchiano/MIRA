@@ -1,4 +1,4 @@
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use anyhow::{Context, Result};
 use needletail::parse_fastx_file;
 
@@ -27,8 +27,14 @@ impl KmerIndex {
             if seq.len() >= k {
                 for i in 0..=(seq.len() - k) {
                     let kmer = &seq[i..i + k];
+                    if contains_nonacgt(kmer) {
+                        continue;
+                    }
                     let h = canonical_hash(kmer);
-                    map.entry(h).or_default().push(id);
+                    let entry = map.entry(h).or_default();
+                    if !entry.contains(&id) {
+                        entry.push(id);
+                    }
                 }
             }
 
@@ -40,6 +46,38 @@ impl KmerIndex {
         Ok(KmerIndex { k, map, targets })
     }
 
+    /// Append targets from a second FASTA into an existing index.
+    /// Target IDs continue from where the primary index left off.
+    pub fn merge_fasta(index: &mut Self, fasta_path: &std::path::Path, k: usize) -> Result<()> {
+        let mut reader = parse_fastx_file(fasta_path)
+            .with_context(|| format!("Failed to open housekeeping FASTA: {}", fasta_path.display()))?;
+
+        while let Some(record) = reader.next() {
+            let rec = record.with_context(|| "Error parsing housekeeping FASTA record")?;
+            let id = index.targets.len();
+            let seq = rec.seq().to_vec();
+            let name = String::from_utf8_lossy(rec.id()).to_string();
+
+            if seq.len() >= k {
+                for i in 0..=(seq.len() - k) {
+                    let kmer = &seq[i..i + k];
+                    if contains_nonacgt(kmer) {
+                        continue;
+                    }
+                    let h = canonical_hash(kmer);
+                    let entry = index.map.entry(h).or_default();
+                    if !entry.contains(&id) {
+                        entry.push(id);
+                    }
+                }
+            }
+
+            index.targets.push(Target { id, name, seq });
+        }
+
+        Ok(())
+    }
+
     /// Fast pre-filter: true if any k-mer in seq has an exact hit.
     pub fn has_exact_hit(&self, seq: &[u8]) -> bool {
         let k = self.k;
@@ -47,7 +85,11 @@ impl KmerIndex {
             return false;
         }
         for i in 0..=(seq.len() - k) {
-            if self.map.contains_key(&canonical_hash(&seq[i..i + k])) {
+            let kmer = &seq[i..i + k];
+            if contains_nonacgt(kmer) {
+                continue;
+            }
+            if self.map.contains_key(&canonical_hash(kmer)) {
                 return true;
             }
         }
@@ -62,77 +104,86 @@ impl KmerIndex {
             return vec![];
         }
 
+        let mut seen: AHashSet<TargetId> = AHashSet::new();
         let mut hits: Vec<TargetId> = Vec::new();
 
         for i in 0..=(seq.len() - k) {
             let kmer = &seq[i..i + k];
+            if contains_nonacgt(kmer) {
+                continue;
+            }
 
-            // exact hit
-            let h = canonical_hash(kmer);
-            if let Some(ids) = self.map.get(&h) {
-                for &tid in ids {
-                    if !hits.contains(&tid) {
-                        hits.push(tid);
-                    }
-                }
-                continue; // exact match found, skip mismatch probing for this position
+            // Exact hit
+            if let Some(ids) = self.map.get(&canonical_hash(kmer)) {
+                add_hits(ids, &mut seen, &mut hits);
+                continue;
             }
 
             if max_mismatches == 0 {
                 continue;
             }
 
-            // mismatch neighbors: mutate each position to the 3 other bases
-            let mut neighbor = kmer.to_vec();
-            'outer: for pos in 0..k {
-                let orig = neighbor[pos];
+            // 1-mismatch neighbors
+            let mut nbr = kmer.to_vec();
+            for pos in 0..k {
+                let orig = nbr[pos];
                 for &alt in b"ACGT" {
                     if alt == orig {
                         continue;
                     }
-                    neighbor[pos] = alt;
-                    let nh = canonical_hash(&neighbor);
-                    if let Some(ids) = self.map.get(&nh) {
-                        for &tid in ids {
-                            if !hits.contains(&tid) {
-                                hits.push(tid);
+                    nbr[pos] = alt;
+                    if let Some(ids) = self.map.get(&canonical_hash(&nbr)) {
+                        add_hits(ids, &mut seen, &mut hits);
+                    }
+                    nbr[pos] = orig;
+                }
+            }
+
+            if max_mismatches < 2 {
+                continue;
+            }
+
+            // 2-mismatch neighbors — independent of whether any 1-mismatch hit was found
+            for pos in 0..k {
+                let orig1 = nbr[pos];
+                for &alt1 in b"ACGT" {
+                    if alt1 == orig1 {
+                        continue;
+                    }
+                    nbr[pos] = alt1;
+                    for pos2 in (pos + 1)..k {
+                        let orig2 = nbr[pos2];
+                        for &alt2 in b"ACGT" {
+                            if alt2 == orig2 {
+                                continue;
                             }
-                        }
-                        neighbor[pos] = orig;
-                        // found with 1 mismatch — for max_mismatches==1 this is sufficient per position
-                        if max_mismatches <= 1 {
-                            continue;
-                        }
-                        // for d=2: probe second mismatch position
-                        for pos2 in (pos + 1)..k {
-                            let orig2 = neighbor[pos2];
-                            for &alt2 in b"ACGT" {
-                                if alt2 == orig2 {
-                                    continue;
-                                }
-                                neighbor[pos2] = alt2;
-                                let nh2 = canonical_hash(&neighbor);
-                                if let Some(ids2) = self.map.get(&nh2) {
-                                    for &tid in ids2 {
-                                        if !hits.contains(&tid) {
-                                            hits.push(tid);
-                                        }
-                                    }
-                                }
-                                neighbor[pos2] = orig2;
+                            nbr[pos2] = alt2;
+                            if let Some(ids) = self.map.get(&canonical_hash(&nbr)) {
+                                add_hits(ids, &mut seen, &mut hits);
                             }
-                        }
-                        if !hits.is_empty() {
-                            break 'outer;
+                            nbr[pos2] = orig2;
                         }
                     }
+                    nbr[pos] = orig1;
                 }
-                neighbor[pos] = orig;
             }
         }
 
         hits
     }
+}
+
+fn add_hits(ids: &[TargetId], seen: &mut AHashSet<TargetId>, hits: &mut Vec<TargetId>) {
+    for &tid in ids {
+        if seen.insert(tid) {
+            hits.push(tid);
+        }
+    }
+}
+
+fn contains_nonacgt(kmer: &[u8]) -> bool {
+    kmer.iter()
+        .any(|&b| !matches!(b.to_ascii_uppercase(), b'A' | b'C' | b'G' | b'T'))
 }
 
 fn canonical_hash(kmer: &[u8]) -> u64 {
@@ -165,7 +216,7 @@ fn base_encode(b: u8) -> u8 {
         b'C' => 1,
         b'G' => 2,
         b'T' => 3,
-        _ => 0,
+        _ => 4, // N/ambiguous — distinct from all ACGT values
     }
 }
 

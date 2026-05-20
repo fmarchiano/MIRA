@@ -42,7 +42,6 @@ pub struct Pileup {
 pub enum VariantType {
     Snp,
     Indel,
-    SpliceJunction,
     Presence,
 }
 
@@ -51,7 +50,6 @@ impl std::fmt::Display for VariantType {
         match self {
             VariantType::Snp => write!(f, "SNP"),
             VariantType::Indel => write!(f, "INDEL"),
-            VariantType::SpliceJunction => write!(f, "SPLICE_JUNCTION"),
             VariantType::Presence => write!(f, "PRESENCE"),
         }
     }

@@ -9,13 +9,14 @@ pub fn call_variants(
 
     for pileup in pileups {
         let target = &targets[pileup.target_id];
-        let mut found_any = false;
 
         for (pos, col) in pileup.columns.iter().enumerate() {
+            // Per-position depth is the correct VAF denominator
+            let pos_depth = col.total;
+
             // SNPs
             for (&alt_base, &count) in &col.alt_counts {
                 if count >= min_reads {
-                    found_any = true;
                     variants.push(Variant {
                         target_id: pileup.target_id,
                         variant_type: VariantType::Snp,
@@ -23,14 +24,13 @@ pub fn call_variants(
                         ref_allele: (target.seq[pos].to_ascii_uppercase() as char).to_string(),
                         alt_allele: (alt_base as char).to_string(),
                         supporting_reads: count,
-                        total_reads: pileup.total_reads,
+                        total_reads: pos_depth,
                     });
                 }
             }
 
             // Deletions
             if col.del_count >= min_reads {
-                found_any = true;
                 variants.push(Variant {
                     target_id: pileup.target_id,
                     variant_type: VariantType::Indel,
@@ -38,36 +38,21 @@ pub fn call_variants(
                     ref_allele: (target.seq[pos].to_ascii_uppercase() as char).to_string(),
                     alt_allele: "-".to_string(),
                     supporting_reads: col.del_count,
-                    total_reads: pileup.total_reads,
+                    total_reads: pos_depth,
                 });
             }
         }
 
-        // PRESENCE row — always emitted (supporting_reads = total aligned reads or 0)
-        if pileup.total_reads > 0 {
-            if !found_any {
-                variants.push(Variant {
-                    target_id: pileup.target_id,
-                    variant_type: VariantType::Presence,
-                    position: 0,
-                    ref_allele: ".".to_string(),
-                    alt_allele: ".".to_string(),
-                    supporting_reads: pileup.total_reads,
-                    total_reads: pileup.total_reads,
-                });
-            }
-        } else {
-            // zero coverage — emit empty PRESENCE row per spec
-            variants.push(Variant {
-                target_id: pileup.target_id,
-                variant_type: VariantType::Presence,
-                position: 0,
-                ref_allele: ".".to_string(),
-                alt_allele: ".".to_string(),
-                supporting_reads: 0,
-                total_reads: 0,
-            });
-        }
+        // Always emit PRESENCE row — provides consistent per-target coverage record
+        variants.push(Variant {
+            target_id: pileup.target_id,
+            variant_type: VariantType::Presence,
+            position: 0,
+            ref_allele: ".".to_string(),
+            alt_allele: ".".to_string(),
+            supporting_reads: pileup.total_reads,
+            total_reads: pileup.total_reads,
+        });
     }
 
     variants
